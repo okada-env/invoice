@@ -18,29 +18,6 @@ import difflib
 from datetime import datetime  # 日付を取得するためのモジュールをインポート
 
 
-def get_close_match_with_score(substring, full_string):
-    best_match = difflib.get_close_matches(substring, [full_string], n=1, cutoff=0.0)
-    if best_match:
-        similarity_score = difflib.SequenceMatcher(None, best_match[0], substring).ratio()
-        return best_match[0], similarity_score
-    else:
-        return None, 0
-
-
-def translate_to_hankaku(text):
-    hankaku = (
-        "0123456789" "abcdefghijklmnopqrstuvwxyz" "ABCDEFGHIJKLMNOPQRSTUVWXYZ" "-!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"
-    )
-    zenkaku = (
-        "０１２３４５６７８９"
-        "ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏｐｑｒｓｔｕｖｗｘｙｚ"
-        "ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺ"
-        "－！＂＃＄％＆＇（）＊＋，－．／：；＜＝＞？＠［＼］＾＿｀｛｜｝～"
-    )
-    zenkaku_to_hankaku_map = str.maketrans(zenkaku, hankaku)
-    return text.translate(zenkaku_to_hankaku_map)
-
-
 def select_excel_file():
     root = Tk()
     root.withdraw()
@@ -53,7 +30,7 @@ if not excel_file:
     print("ファイルが選択されていません。終了します。")
     exit()
 
-url = "https://www.houjin-bangou.nta.go.jp/matomete.html"
+url = "https://www.invoice-kohyo.nta.go.jp/"
 df = pd.read_excel(excel_file)
 
 invoice_numbers = []
@@ -67,24 +44,41 @@ for index, value in enumerate(df['明細情報:フリー１(インボイス番�
 chrome_options = Options()
 chrome_options.add_argument("--no-sandbox")
 chrome_options.add_argument("--disable-dev-shm-usage")
+# Headlessオプションを無効化してブラウザを表示
+# chrome_options.add_argument("--headless")  # 無効化または削除
 
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
 driver.get(url)
 time.sleep(2)
 
+# 「sumSearchOn」をクリックし、10件登録可能に
+try:
+    add_button = WebDriverWait(driver, 10).until(
+        EC.element_to_be_clickable((By.ID, "sumSearchOn"))
+    )
+    add_button.click()
+    time.sleep(2)
+except Exception as e:
+    print(f"初期設定エラー: {e}")
+    driver.quit()
+    exit()
+
 for i in range(0, len(invoice_numbers), 10):
     batch_numbers = invoice_numbers[i:i+10]
 
     for j, (index, number) in enumerate(batch_numbers):
-        search_box_id = f"num_cnt{j+1:02d}"
+        # idが"regNo" + 変数番号(1〜10)で指定される
+        search_box_id = f"regNo{j+1}"
         search_box = driver.find_element(By.ID, search_box_id)
         search_box.clear()
         search_box.send_keys(number)
     
+    # 検索ボタンをクリック
     search_button = driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]')
     search_button.click()
-    time.sleep(2)
+    time.sleep(2)  # 検索結果を確認するために待機時間を追加
 
+    # 検索結果を取得
     for j, (index, number) in enumerate(batch_numbers):
         try:
             company_name_xpath = f'//*[@id="appForm"]/div[2]/div[1]/div[3]/table/tbody/tr[{j+1}]/td[1]'
@@ -95,7 +89,8 @@ for i in range(0, len(invoice_numbers), 10):
             full_text = company_name_element.text.strip()
             company_name = full_text.split("\n")[-1].strip()
 
-            df.at[index, '企業名'] = translate_to_hankaku(company_name) if company_name else "企業名未取得"
+            # 取得した企業名をデータフレームに反映
+            df.at[index, '企業名'] = company_name if company_name else "企業名未取得"
         except Exception as e:
             print(f"企業名取得エラー: {e} (インデックス: {index})")
             df.at[index, '企業名'] = "取得エラー"
